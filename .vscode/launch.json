@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Homebridge",
+      "program": "/usr/local/bin/homebridge",
+      "args": ["-I", "-D"],
+      "request": "launch",
+      "skipFiles": ["<node_internals>/**"],
+      "type": "pwa-node",
+      "preLaunchTask": "build"
+    }
+  ]
+}

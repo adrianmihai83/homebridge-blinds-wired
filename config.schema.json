@@ -1,0 +1,161 @@
+{
+  "pluginAlias": "Blinds Wired",
+  "pluginType": "platform",
+  "headerDisplay": "homebridge-blinds-wired creates window covering (or blind) accessories in HomeKit, providing control and status functions through the command line scripts.",
+  "footerDisplay": "For additional help and documentation please see the [developer page](https://github.com/adrianmihai83/homebridge-blinds-wired).",
+  "singular": true,
+
+  "schema": {
+    "type": "object",
+    "properties": {
+      "blinds": {
+        "type": "array",
+        "title": "Blinds",
+
+        "items": {
+          "type": "object",
+          "title": "Blind",
+          "properties": {
+            "name": {
+              "type": "string",
+              "title": "Blind Name",
+              "required": true,
+              "placeholder": "e.g. Blinds",
+              "description": "Name you want to give this blind accessory in HomeKit. Each blind must have a unique name."
+            },
+
+            "upPin": {
+              "type": "number",
+              "title": "Up Pin",
+              "required": true,
+              "minimum": 0,
+              "maximum": 40,
+              "placeholder": "GPIO (BCM numbering) pin used for Up/Open",
+              "description": "GPIO (BCM numbering) pin used for Up/Open"
+            },
+
+            "downPin": {
+              "type": "number",
+              "title": "Down Pin",
+              "required": true,
+              "minimum": 0,
+              "maximum": 40,
+              "placeholder": "GPIO (BCM numbering) pin used for Down/Close",
+              "description": "GPIO (BCM numbering) pin used for Down/Close"
+            },
+
+            "stopPin": {
+              "type": "number",
+              "title": "Stop Pin",
+              "required": false,
+              "minimum": 0,
+              "maximum": 99,
+              "placeholder": "GPIO (BCM numbering) pin used for Stop",
+              "description": "GPIO (BCM numbering) pin used for Stop - use `99` for Somfy DCT (requieres a pulse on both Up and Down pins for stopping movement). Default: 99."
+            },
+
+            "pulseDuration": {
+              "type": "number",
+              "title": "Pulse duration of changing level changes on GPIO ports (ms)",
+              "required": true,
+              "minimum": 0,
+              "maximum": 2000,
+              "placeholder": "Pulse duration",
+              "description": "Pulse duration of changing level changes on GPIO ports (ms). Default: 200."
+            },
+
+            "activeLow": {
+              "type": "string",
+              "title": "Active Low Relay?",
+              "required": false,
+              "placeholder": "Active Low Relay?",
+              "description": "Is the relay controlled by the GPIO pin active on Low or High? Default: true"
+            },
+
+            "transitionInterval": {
+              "type": "number",
+              "title": "Transition Duration (seconds)",
+              "required": true,
+              "minimum": 0,
+              "maximum": 120,
+              "placeholder": "e.g. 12.5",
+              "description": "Duration, in seconds, of an open or close event used to simulate action progress in HomeKit. Default: 10.0."
+            },
+
+            "manufacturer": {
+              "type": "string",
+              "title": "Blind Manufacturer",
+              "required": false,
+              "placeholder": "e.g. Somfy",
+              "description": "Manufacturer name to assign to this blind."
+            },
+
+            "model": {
+              "type": "string",
+              "title": "Blind Model",
+              "required": false,
+              "placeholder": "e.g. DCT",
+              "description": "Model name to assign to this blind."
+            },
+
+            "serial": {
+              "type": "string",
+              "title": "Blind Serial",
+              "required": false,
+              "placeholder": "e.g. 1234-5678",
+              "description": "Serial number of this blind."
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "layout": [
+    {
+      "key": "blinds",
+      "type": "array",
+      "name": " ",
+      "description": "Provide the details of your blinds",
+      "orderable": true,
+      "buttonText": "Add Blind",
+      "items": [
+        "blinds[].name",
+        {
+          "key": "blinds[]",
+          "type": "section",
+          "title": "Blind Wired",
+          "expandable": true,
+          "expanded": false,
+          "items": [
+            {
+              "description": "Details about connections",
+              "items": [
+                "blinds[].upPin",
+                "blinds[].downPin",
+                "blinds[].stopPin",
+                "blinds[].pulseDuration",
+                "blinds[].activeLow",
+                "blinds[].transitionInterval"
+              ]
+            }
+          ]
+        },
+
+        {
+          "key": "blinds[]",
+          "type": "section",
+          "title": "Blind Information - optional",
+          "expandable": true,
+          "expanded": false,
+          "items": [
+            {
+              "description": "These settings are optional and allow you to set additional information about your blinds.",
+              "items": ["blinds[].manufacturer", "blinds[].model", "blinds[].serial"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
