@@ -32,6 +32,8 @@ Make sure `rpi-gpio` is installed...
 
 `npm install rpi-gpio`
 
+check with: `npm list`
+
 ## Configuration
 
 I strongly recommend using the [Homebridge Config UI](https://github.com/oznu/homebridge-config-ui-x) rather than editing your config.json directly. It does a good job of showing you all the options and always generating a valid configuration so you don't get stuck on typos or looking for stray commas in your `config.json`.
