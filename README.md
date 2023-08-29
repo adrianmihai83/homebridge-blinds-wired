@@ -14,16 +14,6 @@
 `homebridge-blinds-wired` is a [Homebridge](https://homebridge.io) plugin that allows you to raise, lower, and stop your window blinds by wires. It makes a HomeKit window covering accessory available to you that can report status and be controlled entirely through wires.
 These days, there is a decent selection of window blinds available on the market with native HomeKit support. However, there are also blinds systems, such as Somfy, which don't have any meaningful HomeKit support. Add to that the proprietary remote protocols and you're in for a challenge in trying to make window blinds part of your [HomeKit](https://www.apple.com/ios/home) smart home.
 
-There are other blinds plugins for Homebridge that are either tailored to specific blinds solutions, or more broadly focused on blinds that can be controlled through HTTP -- and they do a great job if that's what you're seeking. You can certainly do those things with this plugin, though you'll be writing your own scripts to do so. So why use this plugin in particular in this scenario? Well, in some cases you've got complex state conditions you want to reflect in HomeKit.
-
-For instance, let's take the example of a living room with two motorized Somfy shades (I'm picking Somfy for this example because it's what I'm most familiar with, but other brands have similar concepts). In our example, we have a remote control that has three presets configured - one to control the first shade, one to control the second shade, and one to control both simultaneously. Controlling each of the individual shades is an easy enough task for most of the blinds-related Homebridge plugins.
-
-That last scenario though can be tricky. What if you want to expose, for the sake of argument, the three presets described above as three shades in HomeKit. What you'd like is that when you raise or lower that third preset, the one that controls two shades simultaneously, that HomeKit also reflects the updates across those shades. This type of relational mapping between shades and presets can be challenging to make work. That's what this plugin is for. Allowing you to do easy things like controlling an individual shade and providing you the flexibility to implement more complex things, should you choose to do so, in the form of command-line scripts.
-
-### Changelog
-
-Changelog starting with v2.0 is available [here](https://github.com/adrianmihai83/homebridge-blinds-wired/blob/master/Changelog.md).
-
 ## Installation
 
 If you are new to Homebridge, please first read the [Homebridge](https://homebridge.io) [documentation](https://github.com/homebridge/homebridge/wiki) and installation instructions before proceeding.
