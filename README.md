@@ -75,11 +75,3 @@ For those that prefer configuring things directly, add the accessory in `config.
 This plugin doesn't query nor have direct knowledge of the actual position of your blinds. Instead, it emulates the position based on your most recent request to raise / lower the blinds (i.e. it remembers what you last asked it to do and reports that back to HomeKit). Some blinds, such as Somfy, don't support querying their specific state. That said, if you do wish to use a specific position, you can do so. It's passed as the last argument to the up and down script configuration options. How you choose to handle it, is up to you. What your plugin should output is the position it wants to HomeKit (e.g. 100 if the blind is fully open).
 
 Additionally, if you specify `transitionInterval` and `stopPin` you'll magically get the ability to move the blind a precise amount. For instance, if you try to open the blind to 20%, `homebridge-blinds-wired` will pulsen the `upPin` and then use `transitionInterval` to figure out how many seconds to allow the blinds to move before pulsing the `stopPin`. The result, if you have `transitionInterval` correctly calculated for your blinds, should be relatively precise placement of your blinds at home - something that many popular blinds (e.g. Somfy), can't do natively!
-
-## Plugin Development Dashboard
-
-This is mostly of interest to the true developer nerds amongst us.
-
-[![License](https://img.shields.io/npm/l/homebridge-blinds-wired?color=%23333333&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/adrianmihai83/homebridge-blinds-wired/blob/master/LICENSE.md)
-
-[![Dependencies](https://img.shields.io/librariesio/release/npm/homebridge-blinds-wired?color=%23333333&logo=dependabot&style=for-the-badge)](https://libraries.io/npm/homebridge-blinds-wired)
