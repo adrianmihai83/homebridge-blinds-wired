@@ -223,7 +223,7 @@ export class Blind {
   }
 
   private gpioInitialState(upPin: number, downPin: number, stopPin: number): void {
-    GPIO.MODE_BCM;
+    GPIO.MODE_RPI;
     GPIO.setup(upPin, this.activeLow ? GPIO.DIR_HIGH : GPIO.DIR_LOW);
     GPIO.setup(downPin, this.activeLow ? GPIO.DIR_HIGH : GPIO.DIR_LOW);
     if (stopPin !== 99) {
@@ -443,10 +443,10 @@ export class Blind {
           position.toString() +
           "%"
       );
-      //GPIO.write(pin, this.activeLow ? false : true);
-      //this.togglePin = setTimeout(() => {
-      //  GPIO.write(pin, this.activeLow ? true : false);
-      //}, this.pulseDuration);
+      GPIO.write(pin, this.activeLow ? false : true);
+      this.togglePin = setTimeout(() => {
+        GPIO.write(pin, this.activeLow ? true : false);
+      }, this.pulseDuration);
     }
     try {
       // Parse the return value.

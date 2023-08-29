@@ -30,8 +30,8 @@
               "required": true,
               "minimum": 0,
               "maximum": 40,
-              "placeholder": "GPIO (BCM numbering) pin used for Up/Open",
-              "description": "GPIO (BCM numbering) pin used for Up/Open"
+              "placeholder": "pin used for Up/Open",
+              "description": "GPIO (RPI numbering) pin used for Up/Open"
             },
 
             "downPin": {
@@ -40,8 +40,8 @@
               "required": true,
               "minimum": 0,
               "maximum": 40,
-              "placeholder": "GPIO (BCM numbering) pin used for Down/Close",
-              "description": "GPIO (BCM numbering) pin used for Down/Close"
+              "placeholder": "pin used for Down/Close",
+              "description": "GPIO (RPI numbering) pin used for Down/Close"
             },
 
             "stopPin": {
@@ -50,8 +50,8 @@
               "required": false,
               "minimum": 0,
               "maximum": 99,
-              "placeholder": "GPIO (BCM numbering) pin used for Stop",
-              "description": "GPIO (BCM numbering) pin used for Stop - use `99` for Somfy DCT (requieres a pulse on both Up and Down pins for stopping movement). Default: 99."
+              "placeholder": "pin used for Stop",
+              "description": "GPIO (RPI numbering) pin used for Stop - use `99` for Somfy DCT (requieres a pulse on both Up and Down pins for stopping movement). Default: 99."
             },
 
             "pulseDuration": {
