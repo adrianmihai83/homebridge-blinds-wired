@@ -41,8 +41,7 @@
     "LICENSE.md",
     "README.md",
     "config.schema.json",
-    "dist",
-    "scripts/**.pl"
+    "dist"
   ],
   "main": "dist/index.js",
   "devDependencies": {
