@@ -1,6 +1,6 @@
 {
   "name": "homebridge-blinds-wired",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "displayName": "Homebridge Blinds Wired",
   "description": "HomeKit support for non-smart motorized blinds through wired connection.",
   "author": "Adrian Mihai https://github.com/adrianmihai83",

@@ -315,7 +315,7 @@ export class Blind {
     this.log.info(
       "%s: Moving %s from %s to %s.",
       this.accessory.displayName,
-      moveUp ? "up" : "down",
+      moveUp ? "up/open" : "down/close",
       this.getPositionName(this.currentPosition),
       this.getPositionName(this.targetPosition)
     );
@@ -323,6 +323,8 @@ export class Blind {
     // Execute the move command.
     this.command = "MOVE";
     let newPosition = this.execCommand(this.command, moveUp ? this.gpioPins.upPin : this.gpioPins.downPin, Number(this.targetPosition));
+
+    //this.log.info("New position 1 is: " + newPosition.toString());
 
     // Something went wrong...cleanup and stop.
     if (newPosition === -1) {
@@ -367,6 +369,7 @@ export class Blind {
         if (Number(this.currentPosition) > 0 && Number(this.currentPosition) < 100) {
           // Trigger the stop script, if we have one configured.
           const newPosition = this.stopBlind();
+          //this.log.info("New position 2 (stopBlind) is: " + newPosition.toString());
           if (newPosition !== -1) {
             finalPosition = newPosition;
           }
@@ -450,8 +453,7 @@ export class Blind {
     }
     try {
       // Parse the return value.
-      //const returnValue = parseInt(stdout);
-      const returnValue = 0;
+      const returnValue = position;
 
       // Validate the return value.
       if (isNaN(returnValue) || returnValue < 0 || returnValue > 100) {
