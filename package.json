@@ -48,7 +48,7 @@
   "devDependencies": {
     "@types/node": "^14.14.16",
     "@types/rpi-gpio": "^2.1.1",
-    "@typescript-eslint/eslint-plugin": "^4.11.0",
+    "@typescript-eslint/eslint-plugin": "^6.7.5",
     "@typescript-eslint/parser": "^4.11.0",
     "eslint": "^7.16.0",
     "homebridge": "^1.2.2",
