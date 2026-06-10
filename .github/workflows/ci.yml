@@ -11,7 +11,7 @@ on:
 
 jobs:
 
-  # Run a validation build on LTS versions of node.
+  # Run a validation build on supported versions of node.
   validate-build:
 
     # Build only if we've received a push event.
@@ -20,7 +20,7 @@ jobs:
     # Create the build matrix for all the environments we're validating against.
     strategy:
       matrix:
-        node-version: [ 12.x, 14.x ]
+        node-version: [ 20.x, 22.x, 24.x ]
         os: [ ubuntu-latest ]
 
     # Specify the environments we're going to build in.
@@ -29,12 +29,15 @@ jobs:
     # Execute the build activities.
     steps:
       - name: Checkout the repository.
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Setup the node ${{ matrix.node-version }} environment.
-        uses: actions/setup-node@v2.3.0
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+
+      - name: Install libgpiod development headers.
+        run: sudo apt-get update && sudo apt-get install -y build-essential python3 make g++ gpiod libgpiod-dev
 
       - name: Build and install the package with a clean slate.
         run: |
@@ -55,17 +58,20 @@ jobs:
     # Execute the build and publish activities.
     steps:
     - name: Checkout the repository.
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Setup the node environment.
-      uses: actions/setup-node@v2.3.0
+      uses: actions/setup-node@v4
       with:
 
-        # Use the oldest node LTS version that we support.
-        node-version: '12.x'
+        # Use the current Homebridge 2 runtime.
+        node-version: '24.x'
 
         # Use the NPM registry.
         registry-url: 'https://registry.npmjs.org/'
+
+    - name: Install libgpiod development headers.
+      run: sudo apt-get update && sudo apt-get install -y build-essential python3 make g++ gpiod libgpiod-dev
 
     - name: Install the package with a clean slate.
       run: npm ci
