@@ -13,6 +13,7 @@ export interface BlindConfigInterface {
   upPin: number;
   downPin: number;
   stopPin: number;
+  gpioChip?: number;
   pulseDuration: number;
   activeLow: boolean;
   transitionInterval: number;

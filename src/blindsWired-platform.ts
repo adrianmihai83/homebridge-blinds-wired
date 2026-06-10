@@ -60,8 +60,8 @@ export class blindsWiredPlatform implements DynamicPlatformPlugin {
       // No name or up or down or stop pins defined, we're done.
       if (
         !blindsConfig.name ||
-        !(blindsConfig.upPin >= 0 && blindsConfig.upPin <= 40) ||
-        !(blindsConfig.downPin >= 0 && blindsConfig.downPin <= 40) ||
+        !(blindsConfig.upPin >= 0 && blindsConfig.upPin <= 99) ||
+        !(blindsConfig.downPin >= 0 && blindsConfig.downPin <= 99) ||
         !(blindsConfig.stopPin >= 0 && blindsConfig.stopPin <= 99) ||
         !(blindsConfig.pulseDuration >= 0 && blindsConfig.pulseDuration <= 2000)
       ) {

@@ -28,11 +28,11 @@ sudo npm install -g homebridge-blinds-wired
 
 ## Dependencies
 
-Make sure `rpi-gpio` is installed...
+Make sure libgpiod is installed on the Raspberry Pi:
 
-`npm install rpi-gpio`
-
-check with: `npm list`
+```sh
+sudo apt install -y build-essential python3 make g++ gpiod libgpiod-dev
+```
 
 ## Configuration
 
@@ -48,11 +48,12 @@ For those that prefer configuring things directly, add the accessory in `config.
        "blinds": [
          {
             "name": "Livingroom Curtains",
-            "upPin": 11,
-            "downPin": 13,
+            "upPin": 17,
+            "downPin": 27,
             "stopPin": 99,
+            "gpioChip": 0,
             "pulseDuration": 200,
-            "activeLow": "true",
+            "activeLow": true,
             "transitionInterval": 15,
             "manufacturer": "Somfy",
             "model": "DCT",
@@ -65,12 +66,29 @@ For those that prefer configuring things directly, add the accessory in `config.
 
 ### Options
 
-- `upPin`, `downPin` and `stopPin` should point to the Rpi GIOs.
+- `upPin`, `downPin` and `stopPin` should point to BCM GPIO / libgpiod line numbers, not physical board pins.
+- `gpioChip` is optional and defaults to `0`, which is the usual GPIO chip number on Raspberry Pi.
 - Setting a `stopPin` command in conjunction with a `transitionInterval` will allow you to simulate partially opening or closing your blinds, enabling scenarios such as asking HomeKit to open the blind to a certain percentage (e.g. Hey Siri, set the blinds to 30%). In case of Somfy DCT, stop is realised by pulsing both `upPin` and `downPin`, in this case you should use a value of 99 for `stopPin`
 - `pulseDuration` is the value in miliseconds needed to trigger pins, 200ms is a good value for Somfy DCT.
 - `activeLow` is the relay board active low? in this case use `true`, else... `false`
 - `transitionInterval` is an optional setting that allows you to simulate a blind transition movement between open and closed. If it takes 15 seconds for the blinds to open, enter `15` here and `homebridge-blinds-wired` will simulate the time it takes to complete that transition in HomeKit. The default is 10 seconds.
 - `manufacturer`, `model`, and `serial` are optional settings to allow you to further identify your blinds in HomeKit.
+
+## Upgrading from v1.x
+
+Version 2.0.0 changed the GPIO backend from `rpi-gpio`/sysfs to `node-libgpiod`. The pin options now use BCM GPIO / libgpiod line numbers, not physical board pins.
+
+For example:
+
+- Raspberry Pi physical pin 11 is BCM GPIO 17, so use `"upPin": 17`.
+- Raspberry Pi physical pin 13 is BCM GPIO 27, so use `"downPin": 27`.
+- `stopPin: 99` is unchanged for Somfy DCT and still pulses both the Up and Down pins.
+
+Before installing v2.x, install the libgpiod development headers:
+
+```sh
+sudo apt install -y build-essential python3 make g++ gpiod libgpiod-dev
+```
 
 ## Notes
 

@@ -17,8 +17,7 @@ import {
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings";
 import { BlindConfig } from "./blindsWired-types";
 import { blindsWiredPlatform } from "./blindsWired-platform";
-
-import GPIO from "rpi-gpio";
+import { Chip, Line } from "node-libgpiod";
 
 interface blindWired {
   upPin: number;
@@ -37,6 +36,9 @@ export class Blind {
   public readonly activeLow!: boolean;
   public readonly pulseDuration!: number;
   public command!: string;
+  private readonly gpioChip: Chip;
+  private readonly gpioChipNumber: number;
+  private readonly gpioLines: Partial<Record<keyof blindWired, Line>>;
   private readonly hap: HAP;
   private isMoving: boolean;
   private readonly log: Logging;
@@ -63,12 +65,15 @@ export class Blind {
 
     // Get our commands to execute.
     this.gpioPins = { downPin: blindConfig.downPin, stopPin: blindConfig.stopPin, upPin: blindConfig.upPin };
+    this.gpioChipNumber = blindConfig.gpioChip ?? 0;
+    this.gpioChip = new Chip(this.gpioChipNumber);
+    this.gpioLines = {};
 
     // No up or down gpioPins defined, we're done.
     if (
       !this.name ||
-      !(this.gpioPins.upPin >= 0 && this.gpioPins.upPin <= 40) ||
-      !(this.gpioPins.downPin >= 0 && this.gpioPins.downPin <= 40) ||
+      !(this.gpioPins.upPin >= 0 && this.gpioPins.upPin <= 99) ||
+      !(this.gpioPins.downPin >= 0 && this.gpioPins.downPin <= 99) ||
       !(this.gpioPins.stopPin >= 0 && this.gpioPins.stopPin <= 99)
     ) {
       return;
@@ -182,6 +187,8 @@ export class Blind {
         this.gpioPins.downPin.toString() +
         ", stopPin " +
         this.gpioPins.stopPin.toString() +
+        ", gpioChip " +
+        this.gpioChipNumber.toString() +
         ", pulse duration " +
         this.pulseDuration.toString() +
         "ms, transition time " +
@@ -223,12 +230,36 @@ export class Blind {
   }
 
   private gpioInitialState(upPin: number, downPin: number, stopPin: number): void {
-    GPIO.MODE_RPI;
-    GPIO.setup(upPin, this.activeLow ? GPIO.DIR_HIGH : GPIO.DIR_LOW);
-    GPIO.setup(downPin, this.activeLow ? GPIO.DIR_HIGH : GPIO.DIR_LOW);
+    this.gpioLines.upPin = this.setupGpioLine(upPin);
+    this.gpioLines.downPin = this.setupGpioLine(downPin);
     if (stopPin !== 99) {
-      GPIO.setup(stopPin, this.activeLow ? GPIO.DIR_HIGH : GPIO.DIR_LOW);
+      this.gpioLines.stopPin = this.setupGpioLine(stopPin);
     }
+  }
+
+  private setupGpioLine(pin: number): Line {
+    const line = new Line(this.gpioChip, pin);
+    line.requestOutputMode();
+    line.setValue(this.inactiveValue());
+    return line;
+  }
+
+  private activeValue(): number {
+    return this.activeLow ? 0 : 1;
+  }
+
+  private inactiveValue(): number {
+    return this.activeLow ? 1 : 0;
+  }
+
+  private writeGpioPin(pinName: keyof blindWired, value: number): void {
+    const line = this.gpioLines[pinName];
+
+    if (!line) {
+      throw new Error("GPIO line " + pinName + " has not been configured.");
+    }
+
+    line.setValue(value);
   }
 
   // Configure a stop switch.
@@ -426,12 +457,12 @@ export class Blind {
           "%"
       );
       //toggle pins
-      GPIO.write(this.gpioPins.upPin, this.activeLow ? false : true);
-      GPIO.write(this.gpioPins.downPin, this.activeLow ? false : true);
+      this.writeGpioPin("upPin", this.activeValue());
+      this.writeGpioPin("downPin", this.activeValue());
       //after pulseDuration, toggle back pins
       this.togglePin = setTimeout(() => {
-        GPIO.write(this.gpioPins.upPin, this.activeLow ? true : false);
-        GPIO.write(this.gpioPins.downPin, this.activeLow ? true : false);
+        this.writeGpioPin("upPin", this.inactiveValue());
+        this.writeGpioPin("downPin", this.inactiveValue());
       }, this.pulseDuration);
       // up or down command
     } else {
@@ -446,9 +477,9 @@ export class Blind {
           position.toString() +
           "%"
       );
-      GPIO.write(pin, this.activeLow ? false : true);
+      this.writeGpioPin(this.getPinName(pin), this.activeValue());
       this.togglePin = setTimeout(() => {
-        GPIO.write(pin, this.activeLow ? true : false);
+        this.writeGpioPin(this.getPinName(pin), this.inactiveValue());
       }, this.pulseDuration);
     }
     try {
@@ -472,5 +503,21 @@ export class Blind {
       this.log.error("Error executing the command: %s.", error.message);
       return -1;
     }
+  }
+
+  private getPinName(pin: number): keyof blindWired {
+    if (pin === this.gpioPins.upPin) {
+      return "upPin";
+    }
+
+    if (pin === this.gpioPins.downPin) {
+      return "downPin";
+    }
+
+    if (pin === this.gpioPins.stopPin) {
+      return "stopPin";
+    }
+
+    throw new Error("GPIO pin " + pin.toString() + " is not configured.");
   }
 }

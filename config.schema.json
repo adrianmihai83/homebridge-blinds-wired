@@ -1,7 +1,7 @@
 {
   "pluginAlias": "Blinds Wired",
   "pluginType": "platform",
-  "headerDisplay": "homebridge-blinds-wired creates window covering (or blind) accessories in HomeKit, providing control and status functions through the command line scripts.",
+  "headerDisplay": "homebridge-blinds-wired creates window covering (or blind) accessories in HomeKit, providing control and status functions through Raspberry Pi GPIO lines.",
   "footerDisplay": "For additional help and documentation please see the [developer page](https://github.com/adrianmihai83/homebridge-blinds-wired).",
   "singular": true,
 
@@ -26,32 +26,43 @@
 
             "upPin": {
               "type": "number",
-              "title": "Up Pin",
+              "title": "Up GPIO line",
               "required": true,
               "minimum": 0,
-              "maximum": 40,
-              "placeholder": "pin used for Up/Open",
-              "description": "GPIO (RPI numbering) pin used for Up/Open"
+              "maximum": 99,
+              "placeholder": "BCM GPIO line used for Up/Open",
+              "description": "BCM GPIO / libgpiod line number used for Up/Open, not physical board pin"
             },
 
             "downPin": {
               "type": "number",
-              "title": "Down Pin",
+              "title": "Down GPIO line",
               "required": true,
               "minimum": 0,
-              "maximum": 40,
-              "placeholder": "pin used for Down/Close",
-              "description": "GPIO (RPI numbering) pin used for Down/Close"
+              "maximum": 99,
+              "placeholder": "BCM GPIO line used for Down/Close",
+              "description": "BCM GPIO / libgpiod line number used for Down/Close, not physical board pin"
             },
 
             "stopPin": {
               "type": "number",
-              "title": "Stop Pin",
+              "title": "Stop GPIO line",
               "required": false,
               "minimum": 0,
               "maximum": 99,
-              "placeholder": "pin used for Stop",
-              "description": "GPIO (RPI numbering) pin used for Stop - use `99` for Somfy DCT (requieres a pulse on both Up and Down pins for stopping movement). Default: 99."
+              "placeholder": "BCM GPIO line used for Stop",
+              "description": "BCM GPIO / libgpiod line number used for Stop - use `99` for Somfy DCT (requires a pulse on both Up and Down pins for stopping movement). Default: 99."
+            },
+
+            "gpioChip": {
+              "type": "number",
+              "title": "GPIO chip",
+              "required": false,
+              "minimum": 0,
+              "maximum": 9,
+              "default": 0,
+              "placeholder": "GPIO chip number",
+              "description": "GPIO chip number used by libgpiod, usually 0 on Raspberry Pi."
             },
 
             "pulseDuration": {
@@ -65,9 +76,10 @@
             },
 
             "activeLow": {
-              "type": "string",
+              "type": "boolean",
               "title": "Active Low Relay?",
               "required": false,
+              "default": true,
               "placeholder": "Active Low Relay?",
               "description": "Is the relay controlled by the GPIO pin active on Low or High? Default: true"
             },
@@ -134,6 +146,7 @@
                 "blinds[].upPin",
                 "blinds[].downPin",
                 "blinds[].stopPin",
+                "blinds[].gpioChip",
                 "blinds[].pulseDuration",
                 "blinds[].activeLow",
                 "blinds[].transitionInterval"
