@@ -12,14 +12,28 @@ export interface BlindConfigInterface {
   name: string;
   upPin: number;
   downPin: number;
-  stopPin: number;
+  stopPin?: number;
   gpioChip?: number;
+  pulseDuration?: number;
+  activeLow?: boolean;
+  transitionInterval?: number;
+  manufacturer?: string;
+  model?: string;
+  serial?: string;
+}
+
+export interface ResolvedBlindConfigInterface {
+  name: string;
+  upPin: number;
+  downPin: number;
+  stopPin: number;
+  gpioChip: number;
   pulseDuration: number;
   activeLow: boolean;
   transitionInterval: number;
-  manufacturer: string;
-  model: string;
-  serial: string;
+  manufacturer?: string;
+  model?: string;
+  serial?: string;
 }
 
 // This type declaration make all properties optional recursively including nested objects. This should
@@ -34,3 +48,4 @@ export type DeepPartial<T> = {
 // every property as readonly along the way.
 export type blindsWiredConfig = Readonly<blindsWiredConfigInterface>;
 export type BlindConfig = Readonly<BlindConfigInterface>;
+export type ResolvedBlindConfig = Readonly<ResolvedBlindConfigInterface>;

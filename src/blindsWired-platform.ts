@@ -1,94 +1,151 @@
-/* Copyright(C) 2017-2020, Adrian Mihai (https://github.com/adrianmihai83). All rights reserved.
+/* Copyright(C) 2017-2026, Adrian Mihai (https://github.com/adrianmihai83). All rights reserved.
  *
  * blindsWired-platform.ts: homebridge-blinds-wired platform class.
  */
 import { API, APIEvent, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from "homebridge";
-import { BlindConfig, blindsWiredConfig } from "./blindsWired-types";
-import { PLATFORM_NAME, PLUGIN_NAME } from "./settings";
-import { Blind } from "./blindsWired-blind";
 import util from "util";
 
+import { Blind } from "./blindsWired-blind";
+import { BlindConfig, ResolvedBlindConfig } from "./blindsWired-types";
+import { PLATFORM_NAME, PLUGIN_NAME } from "./settings";
+
+const DEFAULT_STOP_PIN = 99;
+const DEFAULT_GPIO_CHIP = 0;
+const DEFAULT_PULSE_DURATION = 200;
+const DEFAULT_TRANSITION_INTERVAL = 10;
+
+function isIntegerInRange(value: unknown, minimum: number, maximum: number): value is number {
+  return Number.isInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
+}
+
+function resolveBlindConfig(config: BlindConfig): { config?: ResolvedBlindConfig; errors: string[] } {
+  const resolved: ResolvedBlindConfig = {
+    name: typeof config.name === "string" ? config.name.trim() : "",
+    upPin: config.upPin,
+    downPin: config.downPin,
+    stopPin: config.stopPin ?? DEFAULT_STOP_PIN,
+    gpioChip: config.gpioChip ?? DEFAULT_GPIO_CHIP,
+    pulseDuration: config.pulseDuration ?? DEFAULT_PULSE_DURATION,
+    activeLow: config.activeLow ?? true,
+    transitionInterval: config.transitionInterval ?? DEFAULT_TRANSITION_INTERVAL,
+    manufacturer: config.manufacturer,
+    model: config.model,
+    serial: config.serial,
+  };
+  const errors: string[] = [];
+
+  if (!resolved.name) {
+    errors.push("name must be a non-empty string");
+  }
+  if (!isIntegerInRange(resolved.upPin, 0, 99)) {
+    errors.push("upPin must be an integer between 0 and 99");
+  }
+  if (!isIntegerInRange(resolved.downPin, 0, 99)) {
+    errors.push("downPin must be an integer between 0 and 99");
+  }
+  if (!isIntegerInRange(resolved.stopPin, 0, 99)) {
+    errors.push("stopPin must be an integer between 0 and 99");
+  }
+  if (!isIntegerInRange(resolved.gpioChip, 0, 9)) {
+    errors.push("gpioChip must be an integer between 0 and 9");
+  }
+  if (!isIntegerInRange(resolved.pulseDuration, 0, 2000)) {
+    errors.push("pulseDuration must be an integer between 0 and 2000 milliseconds");
+  }
+  if (typeof resolved.activeLow !== "boolean") {
+    errors.push("activeLow must be true or false");
+  }
+  if (typeof resolved.transitionInterval !== "number"
+    || !Number.isFinite(resolved.transitionInterval)
+    || resolved.transitionInterval < 0
+    || resolved.transitionInterval > 120) {
+    errors.push("transitionInterval must be a number between 0 and 120 seconds");
+  }
+  if (resolved.upPin === resolved.downPin) {
+    errors.push("upPin and downPin must use different GPIO lines");
+  }
+  if (resolved.stopPin !== DEFAULT_STOP_PIN
+    && (resolved.stopPin === resolved.upPin || resolved.stopPin === resolved.downPin)) {
+    errors.push("stopPin must use a different GPIO line, or 99 for Somfy DCT");
+  }
+
+  return errors.length > 0 ? { errors } : { config: resolved, errors };
+}
+
 export class blindsWiredPlatform implements DynamicPlatformPlugin {
-  public accessories: PlatformAccessory[] = [];
+  public readonly accessories: PlatformAccessory[] = [];
   public readonly api: API;
-  private readonly blinds: Blind[] = [];
-  private config!: blindsWiredConfig;
-  public debugMode = false;
   public readonly log: Logging;
+  public debugMode = false;
+
+  private readonly blinds: Blind[] = [];
+  private readonly configuredBlinds: BlindConfig[];
 
   constructor(log: Logging, config: PlatformConfig, api: API) {
     this.api = api;
     this.log = log;
+    this.debugMode = config?.debug === true;
+    this.configuredBlinds = Array.isArray(config?.blinds) ? config.blinds as BlindConfig[] : [];
 
-    // No configuration found - we won't start.
-    if (!config) {
-      return;
+    if (this.debugMode) {
+      this.debug("Debug logging enabled.");
     }
-
-    // If we don't have any blinds configured, we're done here.
-    if (!config.blinds) {
+    if (this.configuredBlinds.length === 0) {
       this.log.error("No blinds have been configured.");
       return;
     }
 
-    // Force this to BlindConfig.
-    this.config = {
-      blinds: config.blinds as BlindConfig[]
-    };
-
-    // Capture configuration parameters.
-    if (config.debug) {
-      this.debugMode = config.debug === true;
-      this.debug("Debug logging on. Expect a lot of data.");
-    }
-
-    // Avoid a prospective race condition by waiting to configure our blinds until Homebridge is done
-    // loading all the cached accessories it knows about, and calling configureAccessory() on each.
-    api.on(APIEvent.DID_FINISH_LAUNCHING, this.configureBlinds.bind(this));
+    api.on(APIEvent.DID_FINISH_LAUNCHING, () => this.configureBlinds());
+    api.on(APIEvent.SHUTDOWN, () => this.shutdown());
   }
 
-  // This gets called when homebridge restores cached accessories at startup.
   configureAccessory(accessory: PlatformAccessory): void {
-    // Add this to the accessory array so we can track it.
     this.accessories.push(accessory);
   }
 
-  // Configure our blinds.
+  debug(message: string, ...parameters: unknown[]): void {
+    if (this.debugMode) {
+      this.log.debug(util.format(message, ...parameters));
+    }
+  }
+
   private configureBlinds(): void {
-    // Loop through each configured blind and instantiate it.
-    for (const blindsConfig of this.config.blinds) {
-      // No name or up or down or stop pins defined, we're done.
-      if (
-        !blindsConfig.name ||
-        !(blindsConfig.upPin >= 0 && blindsConfig.upPin <= 99) ||
-        !(blindsConfig.downPin >= 0 && blindsConfig.downPin <= 99) ||
-        !(blindsConfig.stopPin >= 0 && blindsConfig.stopPin <= 99) ||
-        !(blindsConfig.pulseDuration >= 0 && blindsConfig.pulseDuration <= 2000)
-      ) {
-        this.log.error("Name, upPin, downPin, stopPin and pulseDuration are required configuration parameters.");
+    const configuredNames = new Set<string>();
+
+    for (const blindConfig of this.configuredBlinds) {
+      const result = resolveBlindConfig(blindConfig);
+      const name = typeof blindConfig.name === "string" && blindConfig.name.trim() ? blindConfig.name.trim() : "unnamed blind";
+
+      if (!result.config) {
+        this.log.error("Invalid configuration for %s: %s.", name, result.errors.join("; "));
+        continue;
+      }
+      if (configuredNames.has(result.config.name)) {
+        this.log.error("Blind names must be unique; ignoring duplicate name: %s.", result.config.name);
         continue;
       }
 
-      this.blinds.push(new Blind(this, blindsConfig));
+      configuredNames.add(result.config.name);
+      this.blinds.push(new Blind(this, result.config));
     }
 
-    // Remove any blinds that are no longer configured.
     for (const accessory of this.accessories) {
-      // We've configured this blind already, let's keep going.
-      if (this.blinds.some((x) => x.accessory.UUID === accessory.UUID)) {
+      if (this.blinds.some((blind) => blind.accessory.UUID === accessory.UUID)) {
         continue;
       }
 
-      // If we have a blind that we don't have a configuration for, remove it and inform the user.
       this.log.info("Removing blind from HomeKit: %s.", accessory.displayName);
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
     }
   }
 
-  // Utility for debug logging.
-  debug(message: string, ...parameters: unknown[]): void {
-    if (this.debugMode) {
-      this.log.error(util.format(message, ...parameters));
+  private shutdown(): void {
+    for (const blind of this.blinds) {
+      blind.shutdown();
     }
   }
 }
+
+export const configuration = {
+  resolveBlindConfig,
+};

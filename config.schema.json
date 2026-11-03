@@ -7,27 +7,29 @@
 
   "schema": {
     "type": "object",
+    "required": ["blinds"],
     "properties": {
       "blinds": {
         "type": "array",
         "title": "Blinds",
+        "minItems": 1,
 
         "items": {
           "type": "object",
           "title": "Blind",
+          "required": ["name", "upPin", "downPin"],
           "properties": {
             "name": {
               "type": "string",
               "title": "Blind Name",
-              "required": true,
+              "minLength": 1,
               "placeholder": "e.g. Blinds",
               "description": "Name you want to give this blind accessory in HomeKit. Each blind must have a unique name."
             },
 
             "upPin": {
-              "type": "number",
+              "type": "integer",
               "title": "Up GPIO line",
-              "required": true,
               "minimum": 0,
               "maximum": 99,
               "placeholder": "BCM GPIO line used for Up/Open",
@@ -35,9 +37,8 @@
             },
 
             "downPin": {
-              "type": "number",
+              "type": "integer",
               "title": "Down GPIO line",
-              "required": true,
               "minimum": 0,
               "maximum": 99,
               "placeholder": "BCM GPIO line used for Down/Close",
@@ -45,19 +46,18 @@
             },
 
             "stopPin": {
-              "type": "number",
+              "type": "integer",
               "title": "Stop GPIO line",
-              "required": false,
               "minimum": 0,
               "maximum": 99,
+              "default": 99,
               "placeholder": "BCM GPIO line used for Stop",
               "description": "BCM GPIO / libgpiod line number used for Stop - use `99` for Somfy DCT (requires a pulse on both Up and Down pins for stopping movement). Default: 99."
             },
 
             "gpioChip": {
-              "type": "number",
+              "type": "integer",
               "title": "GPIO chip",
-              "required": false,
               "minimum": 0,
               "maximum": 9,
               "default": 0,
@@ -66,11 +66,11 @@
             },
 
             "pulseDuration": {
-              "type": "number",
+              "type": "integer",
               "title": "Pulse duration of changing level changes on GPIO ports (ms)",
-              "required": true,
               "minimum": 0,
               "maximum": 2000,
+              "default": 200,
               "placeholder": "Pulse duration",
               "description": "Pulse duration of changing level changes on GPIO ports (ms). Default: 200."
             },
@@ -78,7 +78,6 @@
             "activeLow": {
               "type": "boolean",
               "title": "Active Low Relay?",
-              "required": false,
               "default": true,
               "placeholder": "Active Low Relay?",
               "description": "Is the relay controlled by the GPIO pin active on Low or High? Default: true"
@@ -87,9 +86,9 @@
             "transitionInterval": {
               "type": "number",
               "title": "Transition Duration (seconds)",
-              "required": true,
               "minimum": 0,
               "maximum": 120,
+              "default": 10,
               "placeholder": "e.g. 12.5",
               "description": "Duration, in seconds, of an open or close event used to simulate action progress in HomeKit. Default: 10.0."
             },
@@ -97,7 +96,6 @@
             "manufacturer": {
               "type": "string",
               "title": "Blind Manufacturer",
-              "required": false,
               "placeholder": "e.g. Somfy",
               "description": "Manufacturer name to assign to this blind."
             },
@@ -105,7 +103,6 @@
             "model": {
               "type": "string",
               "title": "Blind Model",
-              "required": false,
               "placeholder": "e.g. DCT",
               "description": "Model name to assign to this blind."
             },
@@ -113,12 +110,16 @@
             "serial": {
               "type": "string",
               "title": "Blind Serial",
-              "required": false,
               "placeholder": "e.g. 1234-5678",
               "description": "Serial number of this blind."
             }
           }
         }
+      },
+      "debug": {
+        "type": "boolean",
+        "title": "Enable debug logging",
+        "default": false
       }
     }
   },

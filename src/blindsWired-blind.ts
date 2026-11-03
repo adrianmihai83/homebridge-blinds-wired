@@ -1,523 +1,347 @@
-/* Copyright(C) 2017-2020, Adrian Mihai (https://github.com/adrianmihai83). All rights reserved.
+/* Copyright(C) 2017-2026, Adrian Mihai (https://github.com/adrianmihai83). All rights reserved.
  *
- * blindsWired-blinds.ts: homebridge-blinds-wired window covering accessory.
+ * blindsWired-blind.ts: homebridge-blinds-wired window covering accessory.
  */
-import {
-  API,
-  CharacteristicEventTypes,
-  CharacteristicGetCallback,
-  CharacteristicSetCallback,
-  CharacteristicValue,
-  HAP,
-  Logging,
-  PlatformAccessory,
-  Service
-} from "homebridge";
+import type { Chip, Line } from "node-libgpiod";
+import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
 
-import { PLATFORM_NAME, PLUGIN_NAME } from "./settings";
-import { BlindConfig } from "./blindsWired-types";
 import { blindsWiredPlatform } from "./blindsWired-platform";
-import { Chip, Line } from "node-libgpiod";
+import { ResolvedBlindConfig } from "./blindsWired-types";
+import { PLATFORM_NAME, PLUGIN_NAME, PLUGIN_VERSION } from "./settings";
 
-interface blindWired {
-  upPin: number;
-  downPin: number;
-  stopPin: number;
+interface BlindLines {
+  upPin: Line;
+  downPin: Line;
+  stopPin?: Line;
 }
 
+type PinName = keyof BlindLines;
+
 export class Blind {
-  public accessory!: PlatformAccessory;
-  private api: API;
-  private readonly gpioPins: blindWired;
-  private readonly config: BlindConfig;
-  private currentPosition!: CharacteristicValue;
-  private debug: (message: string, ...parameters: unknown[]) => void;
-  private readonly transitionInterval!: number;
-  public readonly activeLow!: boolean;
-  public readonly pulseDuration!: number;
-  public command!: string;
-  private readonly gpioChip: Chip;
-  private readonly gpioChipNumber: number;
-  private readonly gpioLines: Partial<Record<keyof blindWired, Line>>;
-  private readonly hap: HAP;
-  private isMoving: boolean;
-  private readonly log: Logging;
-  private moveIncrementInterval!: number;
-  private moveTimer!: NodeJS.Timeout;
-  private togglePin!: NodeJS.Timeout;
-  private readonly name: string;
+  public readonly accessory: PlatformAccessory;
+
+  private readonly config: ResolvedBlindConfig;
   private readonly platform: blindsWiredPlatform;
-  private pollingTimer!: NodeJS.Timeout;
-  private positionState!: CharacteristicValue;
-  private targetPosition!: CharacteristicValue;
+  private readonly service: Service;
+  private currentPosition: number;
+  private targetPosition: number;
+  private positionState: number;
+  private gpioChip?: Chip;
+  private gpioLines: Partial<BlindLines> = {};
+  private gpioError?: Error;
+  private isMoving = false;
+  private moveTimer?: NodeJS.Timeout;
+  private pulseTimer?: NodeJS.Timeout;
 
-  constructor(platform: blindsWiredPlatform, blindConfig: BlindConfig) {
-    this.api = platform.api;
-    this.config = blindConfig;
-    this.debug = platform.debug.bind(platform);
-    this.hap = this.api.hap;
-    this.isMoving = false;
-    this.log = platform.log;
+  constructor(platform: blindsWiredPlatform, config: ResolvedBlindConfig) {
     this.platform = platform;
+    this.config = config;
 
-    // Name these blinds, primarily for logging purposes.
-    this.name = blindConfig.name;
+    const uuid = platform.api.hap.uuid.generate("Blinds Wired." + config.name);
+    const cachedAccessory = platform.accessories.find((candidate) => candidate.UUID === uuid);
+    this.accessory = cachedAccessory ?? new platform.api.platformAccessory(config.name, uuid);
 
-    // Get our commands to execute.
-    this.gpioPins = { downPin: blindConfig.downPin, stopPin: blindConfig.stopPin, upPin: blindConfig.upPin };
-    this.gpioChipNumber = blindConfig.gpioChip ?? 0;
-    this.gpioChip = new Chip(this.gpioChipNumber);
-    this.gpioLines = {};
-
-    // No up or down gpioPins defined, we're done.
-    if (
-      !this.name ||
-      !(this.gpioPins.upPin >= 0 && this.gpioPins.upPin <= 99) ||
-      !(this.gpioPins.downPin >= 0 && this.gpioPins.downPin <= 99) ||
-      !(this.gpioPins.stopPin >= 0 && this.gpioPins.stopPin <= 99)
-    ) {
-      return;
+    if (!cachedAccessory) {
+      platform.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
+      platform.accessories.push(this.accessory);
     }
 
-    // Configure our delay between state changes.
-    this.transitionInterval = blindConfig.transitionInterval;
+    this.service = this.accessory.getService(platform.api.hap.Service.WindowCovering)
+      ?? this.accessory.addService(platform.api.hap.Service.WindowCovering, config.name);
 
-    // Make sure we have a sane value for delay.
-    if (this.transitionInterval < 0) {
-      this.transitionInterval = 0;
-    }
-
-    // Configure our pulse duration.
-    this.pulseDuration = blindConfig.pulseDuration;
-
-    // Make sure we have a sane value for pulseDuration.
-    if (this.pulseDuration < 0 || this.pulseDuration > 2000) {
-      this.pulseDuration = 200;
-    }
-
-    // Configure our relay activation.
-    this.activeLow = blindConfig.activeLow;
-
-    // Make sure we have a sane value for activeLow (true or false).
-    if (typeof this.activeLow !== "boolean") {
-      this.activeLow = true;
-    }
-
-    // If we have a transition time set, calculate how many milliseconds are needed to increment the position by one, in milliseconds.
-    this.moveIncrementInterval = this.transitionInterval ? this.transitionInterval * 10 : 100;
-
-    // Initialize the blinds. This is a value between 0 - 100, in single steps.
-    this.currentPosition = 0;
-    this.positionState = this.api.hap.Characteristic.PositionState.STOPPED;
-    this.targetPosition = 0;
-
-    this.configureBlind();
-    this.configureInfo();
-    this.gpioInitialState(this.gpioPins.upPin, this.gpioPins.downPin, this.gpioPins.stopPin);
-  }
-
-  // Configure the blind accessory.
-  private configureBlind(): boolean {
-    const Characteristic = this.api.hap.Characteristic;
-
-    // Generate this blind's unique identifier.
-    const uuid = this.hap.uuid.generate("Blinds Wired." + this.name);
-
-    // See if we already know about this accessory or if it's truly new. If it is new, add it to HomeKit.
-    let accessory;
-    if ((accessory = this.platform.accessories.find((x) => x.UUID === uuid)) === undefined) {
-      this.accessory = new this.api.platformAccessory(this.name, uuid);
-
-      // Register this accessory with homebridge and add it to the accessory array so we can track it.
-      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
-      this.platform.accessories.push(this.accessory);
-    }
-
-    // We already had this accessory cached, let's use it.
-    if (accessory) {
-      this.accessory = accessory;
-    }
-
-    // Check to see if we already have a window covering service.
-    let blindsService = this.accessory.getService(this.hap.Service.WindowCovering);
-
-    // No window covering service found, let's add it.
-    if (!blindsService) {
-      // Now add the window covering service.
-      blindsService = new this.hap.Service.WindowCovering(this.accessory.displayName);
-      this.accessory.addService(blindsService);
-    }
-
-    // Initialize our state as stopped.
-    blindsService.setCharacteristic(Characteristic.PositionState, Characteristic.PositionState.STOPPED);
-
-    // See if we have saved a state for our blind.
-    this.currentPosition = -1;
-
-    if ("blindPosition" in this.accessory.context) {
-      this.currentPosition = this.accessory.context.blindPosition as CharacteristicValue;
-    }
-
-    // If we had an error getting the initial state, assume the blinds are closed.
-    if (this.currentPosition === -1) {
-      this.currentPosition = 0;
-    }
-
-    // Set the initial position for our blinds.
+    const cachedPosition = Number(this.accessory.context.blindPosition);
+    this.currentPosition = Number.isFinite(cachedPosition) && cachedPosition >= 0 && cachedPosition <= 100
+      ? Math.round(cachedPosition)
+      : 0;
     this.targetPosition = this.currentPosition;
-    blindsService.getCharacteristic(Characteristic.CurrentPosition).updateValue(this.currentPosition);
-    blindsService.getCharacteristic(Characteristic.TargetPosition).updateValue(this.targetPosition);
+    this.positionState = platform.api.hap.Characteristic.PositionState.STOPPED;
 
-    // Setup our event listeners.
-    blindsService.getCharacteristic(Characteristic.CurrentPosition).on(CharacteristicEventTypes.GET, this.getCurrentPosition.bind(this));
+    this.configureInformation();
+    this.configureCharacteristics();
+    this.initializeGpio();
+    this.updateAccessoryContext();
 
-    blindsService.getCharacteristic(Characteristic.PositionState).on(CharacteristicEventTypes.GET, this.getPositionState.bind(this));
-
-    blindsService
-      .getCharacteristic(Characteristic.TargetPosition)
-      .on(CharacteristicEventTypes.GET, this.getTargetPosition.bind(this))
-      .on(CharacteristicEventTypes.SET, this.setTargetPosition.bind(this));
-
-    // Inform the user of our configuration.
-    this.log.info(
-      this.accessory.displayName +
-        " configured: upPin " +
-        this.gpioPins.upPin.toString() +
-        ", downPin " +
-        this.gpioPins.downPin.toString() +
-        ", stopPin " +
-        this.gpioPins.stopPin.toString() +
-        ", gpioChip " +
-        this.gpioChipNumber.toString() +
-        ", pulse duration " +
-        this.pulseDuration.toString() +
-        "ms, transition time " +
-        this.transitionInterval.toString() +
-        "s, activeLow " +
-        this.activeLow.toString()
+    platform.log.info(
+      "%s configured: upPin %d, downPin %d, stopPin %d, gpioChip %d, pulse %dms, transition %ss, activeLow %s.",
+      config.name,
+      config.upPin,
+      config.downPin,
+      config.stopPin,
+      config.gpioChip,
+      config.pulseDuration,
+      config.transitionInterval,
+      config.activeLow,
     );
-
-    return true;
   }
 
-  // Configure the blind information for HomeKit.
-  private configureInfo(): boolean {
-    // Update the manufacturer information for this blind.
-    if (this.config.manufacturer) {
-      this.accessory
-        .getService(this.hap.Service.AccessoryInformation)
-        ?.getCharacteristic(this.hap.Characteristic.Manufacturer)
-        .updateValue(this.config.manufacturer);
+  shutdown(): void {
+    this.isMoving = false;
+    if (this.moveTimer) {
+      clearTimeout(this.moveTimer);
+      this.moveTimer = undefined;
+    }
+    this.finishPulse();
+
+    for (const [name, line] of Object.entries(this.gpioLines)) {
+      if (!line) {
+        continue;
+      }
+      try {
+        line.setValue(this.inactiveValue());
+      } catch (error) {
+        this.platform.log.warn("Unable to set %s %s inactive during shutdown: %s", this.config.name, name, this.errorMessage(error));
+      }
+      try {
+        line.release();
+      } catch (error) {
+        this.platform.log.warn("Unable to release %s %s during shutdown: %s", this.config.name, name, this.errorMessage(error));
+      }
     }
 
-    // Update the model information for this blind.
-    if (this.config.model) {
-      this.accessory
-        .getService(this.hap.Service.AccessoryInformation)
-        ?.getCharacteristic(this.hap.Characteristic.Model)
-        .updateValue(this.config.model);
-    }
-
-    // Update the serial number for this blind.
-    if (this.config.serial) {
-      this.accessory
-        .getService(this.hap.Service.AccessoryInformation)
-        ?.getCharacteristic(this.hap.Characteristic.SerialNumber)
-        .updateValue(this.config.serial);
-    }
-
-    return true;
+    this.gpioLines = {};
+    this.gpioChip = undefined;
   }
 
-  private gpioInitialState(upPin: number, downPin: number, stopPin: number): void {
-    this.gpioLines.upPin = this.setupGpioLine(upPin);
-    this.gpioLines.downPin = this.setupGpioLine(downPin);
-    if (stopPin !== 99) {
-      this.gpioLines.stopPin = this.setupGpioLine(stopPin);
+  private configureCharacteristics(): void {
+    const Characteristic = this.platform.api.hap.Characteristic;
+
+    this.service.setCharacteristic(Characteristic.PositionState, this.positionState);
+    this.service.setCharacteristic(Characteristic.CurrentPosition, this.currentPosition);
+    this.service.setCharacteristic(Characteristic.TargetPosition, this.targetPosition);
+
+    this.service.getCharacteristic(Characteristic.CurrentPosition).onGet(() => this.currentPosition);
+    this.service.getCharacteristic(Characteristic.PositionState).onGet(() => this.positionState);
+    this.service.getCharacteristic(Characteristic.TargetPosition)
+      .onGet(() => this.targetPosition)
+      .onSet((value) => this.setTargetPosition(value));
+  }
+
+  private configureInformation(): void {
+    const { Characteristic, Service: HapService } = this.platform.api.hap;
+    const information = this.accessory.getService(HapService.AccessoryInformation);
+
+    information
+      ?.setCharacteristic(Characteristic.Manufacturer, this.config.manufacturer || "adrianmihai83")
+      .setCharacteristic(Characteristic.Model, this.config.model || "Raspberry Pi GPIO Wired Blind")
+      .setCharacteristic(
+        Characteristic.SerialNumber,
+        this.config.serial || `${this.config.gpioChip}-${this.config.upPin}-${this.config.downPin}`,
+      )
+      .setCharacteristic(Characteristic.FirmwareRevision, PLUGIN_VERSION);
+  }
+
+  private initializeGpio(): void {
+    try {
+      // Loading the native module here allows Homebridge to inspect or disable
+      // the plugin on machines that do not provide Raspberry Pi GPIO.
+      const Gpio = require("node-libgpiod") as typeof import("node-libgpiod");
+      this.gpioChip = new Gpio.Chip(this.config.gpioChip);
+      this.gpioLines.upPin = this.requestLine(Gpio, this.config.upPin);
+      this.gpioLines.downPin = this.requestLine(Gpio, this.config.downPin);
+      if (this.config.stopPin !== 99) {
+        this.gpioLines.stopPin = this.requestLine(Gpio, this.config.stopPin);
+      }
+      this.gpioError = undefined;
+    } catch (error) {
+      const gpioError = error instanceof Error ? error : new Error(String(error));
+      this.shutdown();
+      this.gpioError = gpioError;
+      this.platform.log.error("Unable to initialise GPIO for %s: %s", this.config.name, this.gpioError.message);
     }
   }
 
-  private setupGpioLine(pin: number): Line {
-    const line = new Line(this.gpioChip, pin);
-    line.requestOutputMode();
-    line.setValue(this.inactiveValue());
+  private requestLine(Gpio: typeof import("node-libgpiod"), pin: number): Line {
+    if (!this.gpioChip) {
+      throw new Error("GPIO chip is not available");
+    }
+    const line = new Gpio.Line(this.gpioChip, pin);
+    // Request the line with its inactive value from the first output state.
+    // This avoids a short active-low relay pulse during Homebridge startup.
+    try {
+      line.requestOutputMode(PLUGIN_NAME, this.inactiveValue());
+    } catch (error) {
+      try {
+        line.release();
+      } catch {
+        // Preserve the original request error.
+      }
+      throw error;
+    }
     return line;
   }
 
-  private activeValue(): number {
-    return this.activeLow ? 0 : 1;
-  }
-
-  private inactiveValue(): number {
-    return this.activeLow ? 1 : 0;
-  }
-
-  private writeGpioPin(pinName: keyof blindWired, value: number): void {
-    const line = this.gpioLines[pinName];
-
-    if (!line) {
-      throw new Error("GPIO line " + pinName + " has not been configured.");
+  private setTargetPosition(value: CharacteristicValue): void {
+    const requestedPosition = Number(value);
+    if (!Number.isFinite(requestedPosition) || requestedPosition < 0 || requestedPosition > 100) {
+      throw new Error("Target position must be between 0 and 100");
     }
 
-    line.setValue(value);
-  }
-
-  // Configure a stop switch.
-  private configureStop(): boolean {
-    // Clear out any previous switch service.
-    const switchService = this.accessory.getService(this.hap.Service.Switch);
-
-    if (switchService) {
-      this.accessory.removeService(switchService);
-    }
-
-    return true;
-  }
-
-  // User-friendly name for a given position.
-  private getPositionName(position: CharacteristicValue): string {
-    switch (position) {
-      case 0:
-        return "closed";
-        break;
-
-      case 100:
-        return "open";
-        break;
-
-      default:
-        return position.toString() + "%";
-        break;
-    }
-  }
-
-  // Get the current window covering state.
-  private getPositionState(callback: CharacteristicGetCallback): void {
-    callback(undefined, this.positionState);
-  }
-
-  // Get the current window covering state.
-  private getCurrentPosition(callback: CharacteristicGetCallback): void {
-    callback(undefined, this.currentPosition);
-  }
-
-  // Get the target window covering state.
-  private getTargetPosition(callback: CharacteristicGetCallback): void {
-    callback(undefined, this.targetPosition);
-  }
-
-  // Set the target window covering state and execute the action.
-  private setTargetPosition(value: CharacteristicValue, callback: CharacteristicSetCallback): void {
-    const Characteristic = this.hap.Characteristic;
-
-    // Grab the blinds service.
-    const blindsService = this.accessory.getService(this.hap.Service.WindowCovering);
-
-    if (!blindsService) {
-      callback(Error("Error finding the blinds service."));
+    const target = Math.round(requestedPosition);
+    if (target === this.currentPosition) {
+      if (this.isMoving) {
+        this.pulse(this.config.stopPin === 99 ? ["upPin", "downPin"] : ["stopPin"]);
+      }
+      this.targetPosition = target;
+      this.stopPositionUpdates();
       return;
     }
 
-    // We're already where we want to be, do nothing.
-    if (value === this.currentPosition) {
-      this.log("We're already where we want to be, do nothing");
-      this.targetPosition = value;
-      this.positionState = Characteristic.PositionState.STOPPED;
-
-      blindsService.getCharacteristic(Characteristic.TargetPosition).updateValue(this.targetPosition);
-      blindsService.getCharacteristic(Characteristic.CurrentPosition).updateValue(this.currentPosition);
-      blindsService.getCharacteristic(Characteristic.PositionState).updateValue(this.positionState);
-
-      callback(null);
-      return;
-    }
-
-    // We're moving. We don't want any status refreshes until we complete the move.
+    this.ensureGpio();
+    const moveUp = target > this.currentPosition;
+    this.targetPosition = target;
+    this.positionState = moveUp
+      ? this.platform.api.hap.Characteristic.PositionState.INCREASING
+      : this.platform.api.hap.Characteristic.PositionState.DECREASING;
     this.isMoving = true;
+    this.service.updateCharacteristic(this.platform.api.hap.Characteristic.TargetPosition, this.targetPosition);
+    this.service.updateCharacteristic(this.platform.api.hap.Characteristic.PositionState, this.positionState);
 
-    // Figure out our move dynamics.
-    const moveUp = value > this.currentPosition;
-    this.targetPosition = value;
-    this.positionState = moveUp ? Characteristic.PositionState.INCREASING : Characteristic.PositionState.DECREASING;
-
-    // Tell HomeKit we're on the move.
-    blindsService.getCharacteristic(Characteristic.PositionState).updateValue(this.positionState);
-
-    this.log.info(
+    this.platform.log.info(
       "%s: Moving %s from %s to %s.",
-      this.accessory.displayName,
+      this.config.name,
       moveUp ? "up/open" : "down/close",
-      this.getPositionName(this.currentPosition),
-      this.getPositionName(this.targetPosition)
+      this.positionName(this.currentPosition),
+      this.positionName(this.targetPosition),
     );
 
-    // Execute the move command.
-    this.command = "MOVE";
-    let newPosition = this.execCommand(this.command, moveUp ? this.gpioPins.upPin : this.gpioPins.downPin, Number(this.targetPosition));
+    try {
+      this.pulse(moveUp ? ["upPin"] : ["downPin"]);
+      this.schedulePositionUpdate(moveUp ? 1 : -1);
+    } catch (error) {
+      this.targetPosition = this.currentPosition;
+      this.stopPositionUpdates();
+      throw error;
+    }
+  }
 
-    //this.log.info("New position 1 is: " + newPosition.toString());
-
-    // Something went wrong...cleanup and stop.
-    if (newPosition === -1) {
+  private schedulePositionUpdate(increment: 1 | -1): void {
+    if (this.moveTimer) {
       clearTimeout(this.moveTimer);
-      this.positionState = Characteristic.PositionState.STOPPED;
-      blindsService.getCharacteristic(Characteristic.PositionState).updateValue(this.positionState);
-      callback(Error("Error executing the move command."));
-      this.isMoving = false;
-      return;
     }
 
-    // Special case - if we don't have a script that returns a position as output, we infer the
-    // answer based on whether we are opening or closing, and assume we have opened or closed completely.
-    if (!newPosition && moveUp) {
-      newPosition = 100;
-    }
-
-    // Execute the move and we're done.
-    this.moveBlind(blindsService, newPosition, moveUp ? 1 : -1);
-
-    callback(null);
-  }
-
-  // Emulate a sleep function.
-  private sleep(ms: number): Promise<NodeJS.Timeout> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  // Move a blind in HomeKit.
-  private moveBlind(blindsService: Service, finalPosition: CharacteristicValue, increment: CharacteristicValue): void {
-    // Clear out the previous delay timer, if one is configured.
-    clearTimeout(this.moveTimer);
-
-    // Set a timer to simulate an actual delay in completing the action to give us that interactive feeling.
+    const millisecondsPerPercent = this.config.transitionInterval > 0
+      ? this.config.transitionInterval * 10
+      : 0;
     this.moveTimer = setTimeout(() => {
-      // Increment our position.
-      this.accessory.context.blindPosition = (this.currentPosition as number) += increment as number;
+      this.currentPosition = Math.max(0, Math.min(100, this.currentPosition + increment));
+      this.accessory.context.blindPosition = this.currentPosition;
+      this.service.updateCharacteristic(this.platform.api.hap.Characteristic.CurrentPosition, this.currentPosition);
 
-      // If we exceed our bounds or we're at our final position, we're done.
-      if (Number(this.currentPosition) <= 0 || Number(this.currentPosition) >= 100 || this.currentPosition === finalPosition) {
-        // Our final position is something other than completely open or completely closed.
-        if (Number(this.currentPosition) > 0 && Number(this.currentPosition) < 100) {
-          // Trigger the stop script, if we have one configured.
-          const newPosition = this.stopBlind();
-          //this.log.info("New position 2 (stopBlind) is: " + newPosition.toString());
-          if (newPosition !== -1) {
-            finalPosition = newPosition;
+      if (this.currentPosition === this.targetPosition || this.currentPosition === 0 || this.currentPosition === 100) {
+        if (this.currentPosition > 0 && this.currentPosition < 100) {
+          try {
+            this.pulse(this.config.stopPin === 99 ? ["upPin", "downPin"] : ["stopPin"]);
+          } catch (error) {
+            this.platform.log.error("Unable to stop %s: %s", this.config.name, this.errorMessage(error));
           }
         }
-
-        // Update the final values and tell HomeKit we're done.
-        this.accessory.context.blindPosition = this.targetPosition = this.currentPosition = finalPosition;
-        this.positionState = this.hap.Characteristic.PositionState.STOPPED;
-
-        blindsService.getCharacteristic(this.hap.Characteristic.TargetPosition).updateValue(this.targetPosition);
-        blindsService.getCharacteristic(this.hap.Characteristic.CurrentPosition).updateValue(this.currentPosition);
-        blindsService.getCharacteristic(this.hap.Characteristic.PositionState).updateValue(this.positionState);
-
-        // We're done moving.
-        this.isMoving = false;
-        this.log(this.accessory.displayName + " has stopped at " + finalPosition.toString() + "%");
+        this.targetPosition = this.currentPosition;
+        this.stopPositionUpdates();
+        this.platform.log.info("%s has stopped at %d%%.", this.config.name, this.currentPosition);
         return;
       }
 
-      // We're still moving. Update our current position, and let's keep moving.
-      blindsService.getCharacteristic(this.hap.Characteristic.CurrentPosition).updateValue(this.currentPosition);
-      this.moveBlind(blindsService, finalPosition, increment);
-    }, this.moveIncrementInterval);
+      this.schedulePositionUpdate(increment);
+    }, millisecondsPerPercent);
+    this.moveTimer.unref?.();
   }
 
-  // Stop a blind in HomeKit.
-  private stopBlind(): number {
-    // Only execute if we've configured a stop pin.
-    if (!(this.gpioPins.stopPin >= 0 && this.gpioPins.stopPin <= 99)) {
-      return -1;
+  private stopPositionUpdates(): void {
+    if (this.moveTimer) {
+      clearTimeout(this.moveTimer);
+      this.moveTimer = undefined;
     }
-
-    // Execute and return.
-    this.command = "STOP";
-    return this.execCommand(this.command, this.gpioPins.stopPin, Number(this.currentPosition));
+    this.isMoving = false;
+    this.positionState = this.platform.api.hap.Characteristic.PositionState.STOPPED;
+    this.service.updateCharacteristic(this.platform.api.hap.Characteristic.TargetPosition, this.targetPosition);
+    this.service.updateCharacteristic(this.platform.api.hap.Characteristic.CurrentPosition, this.currentPosition);
+    this.service.updateCharacteristic(this.platform.api.hap.Characteristic.PositionState, this.positionState);
+    this.updateAccessoryContext();
   }
 
-  // Execute a command, with error handling.
-  private execCommand(command: string, pin: number, position: number): number {
-    clearTimeout(this.togglePin);
-    //Check if pin=99; stop pulsing both pinUp and pinDown at the same time, Somfy DCT
-    if (this.command === "STOP" && pin === 99) {
-      this.log(
-        "Executed command " +
-          command +
-          ", pulsing pins " +
-          this.gpioPins.upPin.toString() +
-          " and " +
-          this.gpioPins.downPin.toString() +
-          ", pulseDuration: " +
-          this.pulseDuration.toString() +
-          "ms, setting position to " +
-          position.toString() +
-          "%"
-      );
-      //toggle pins
-      this.writeGpioPin("upPin", this.activeValue());
-      this.writeGpioPin("downPin", this.activeValue());
-      //after pulseDuration, toggle back pins
-      this.togglePin = setTimeout(() => {
-        this.writeGpioPin("upPin", this.inactiveValue());
-        this.writeGpioPin("downPin", this.inactiveValue());
-      }, this.pulseDuration);
-      // up or down command
-    } else {
-      this.log(
-        "Executed command " +
-          command +
-          ", pulsing pin " +
-          pin.toString() +
-          ", pulseDuration: " +
-          this.pulseDuration.toString() +
-          "ms, setting position to " +
-          position.toString() +
-          "%"
-      );
-      this.writeGpioPin(this.getPinName(pin), this.activeValue());
-      this.togglePin = setTimeout(() => {
-        this.writeGpioPin(this.getPinName(pin), this.inactiveValue());
-      }, this.pulseDuration);
-    }
+  private pulse(pinNames: PinName[]): void {
+    this.ensureGpio();
+    this.finishPulse();
+
     try {
-      // Parse the return value.
-      const returnValue = position;
-
-      // Validate the return value.
-      if (isNaN(returnValue) || returnValue < 0 || returnValue > 100) {
-        this.log.error("Invalid value returned when toggling %s: %s. A numeric value between 0 and 99 is expected.", pin.toString(), returnValue);
-        return -1;
+      for (const pinName of pinNames) {
+        const line = this.gpioLines[pinName];
+        if (!line) {
+          throw new Error(`GPIO line ${pinName} is not configured`);
+        }
+        line.setValue(this.activeValue());
       }
-
-      // Return the value.
-      return returnValue;
     } catch (error) {
-      if (!(error instanceof Error)) {
-        this.log.error("Unknown error received while attempting to toggle pin %s: %s.", command, error);
-        return -1;
-      }
+      this.finishPulse();
+      throw error;
+    }
 
-      this.log.error("Error executing the command: %s.", error.message);
-      return -1;
+    this.pulseTimer = setTimeout(() => this.finishPulse(), this.config.pulseDuration);
+    this.pulseTimer.unref?.();
+  }
+
+  private finishPulse(): void {
+    if (this.pulseTimer) {
+      clearTimeout(this.pulseTimer);
+      this.pulseTimer = undefined;
+    }
+
+    for (const line of Object.values(this.gpioLines)) {
+      if (!line) {
+        continue;
+      }
+      try {
+        line.setValue(this.inactiveValue());
+      } catch (error) {
+        this.gpioError = error instanceof Error ? error : new Error(String(error));
+        this.platform.log.error("Unable to deactivate a GPIO line for %s: %s", this.config.name, this.gpioError.message);
+      }
     }
   }
 
-  private getPinName(pin: number): keyof blindWired {
-    if (pin === this.gpioPins.upPin) {
-      return "upPin";
+  private ensureGpio(): void {
+    if (this.gpioError) {
+      throw this.gpioError;
     }
-
-    if (pin === this.gpioPins.downPin) {
-      return "downPin";
+    if (!this.gpioLines.upPin || !this.gpioLines.downPin) {
+      throw new Error("GPIO lines are not available");
     }
+  }
 
-    if (pin === this.gpioPins.stopPin) {
-      return "stopPin";
+  private updateAccessoryContext(): void {
+    this.accessory.context.blindPosition = this.currentPosition;
+    this.accessory.context.device = {
+      name: this.config.name,
+      upPin: this.config.upPin,
+      downPin: this.config.downPin,
+      stopPin: this.config.stopPin,
+      gpioChip: this.config.gpioChip,
+      pulseDuration: this.config.pulseDuration,
+      activeLow: this.config.activeLow,
+      transitionInterval: this.config.transitionInterval,
+    };
+    this.platform.api.updatePlatformAccessories([this.accessory]);
+  }
+
+  private activeValue(): number {
+    return this.config.activeLow ? 0 : 1;
+  }
+
+  private inactiveValue(): number {
+    return this.config.activeLow ? 1 : 0;
+  }
+
+  private positionName(position: number): string {
+    if (position === 0) {
+      return "closed";
     }
+    if (position === 100) {
+      return "open";
+    }
+    return `${position}%`;
+  }
 
-    throw new Error("GPIO pin " + pin.toString() + " is not configured.");
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 }

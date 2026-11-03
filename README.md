@@ -34,11 +34,13 @@ Make sure libgpiod is installed on the Raspberry Pi:
 sudo apt install -y build-essential python3 make g++ gpiod libgpiod-dev
 ```
 
+Version 2.0.2 supports Homebridge 2.x on Node.js 22.12 or Node.js 24.
+
 ## Configuration
 
 I strongly recommend using the [Homebridge Config UI](https://github.com/oznu/homebridge-config-ui-x) rather than editing your config.json directly. It does a good job of showing you all the options and always generating a valid configuration so you don't get stuck on typos or looking for stray commas in your `config.json`.
 
-For those that prefer configuring things directly, add the accessory in `config.json` in your home directory inside `.homebridge`.
+For those that prefer configuring things directly, add the platform in `config.json` in your home directory inside `.homebridge`.
 
 ```js
    "platforms": [
@@ -68,11 +70,13 @@ For those that prefer configuring things directly, add the accessory in `config.
 
 - `upPin`, `downPin` and `stopPin` should point to BCM GPIO / libgpiod line numbers, not physical board pins.
 - `gpioChip` is optional and defaults to `0`, which is the usual GPIO chip number on Raspberry Pi.
-- Setting a `stopPin` command in conjunction with a `transitionInterval` will allow you to simulate partially opening or closing your blinds, enabling scenarios such as asking HomeKit to open the blind to a certain percentage (e.g. Hey Siri, set the blinds to 30%). In case of Somfy DCT, stop is realised by pulsing both `upPin` and `downPin`, in this case you should use a value of 99 for `stopPin`
-- `pulseDuration` is the value in miliseconds needed to trigger pins, 200ms is a good value for Somfy DCT.
-- `activeLow` is the relay board active low? in this case use `true`, else... `false`
+- Setting a `stopPin` in conjunction with a `transitionInterval` allows partial positions, such as asking HomeKit to open a blind to 30%. For Somfy DCT, stopping is performed by pulsing both `upPin` and `downPin`; use `99` for `stopPin`. This is also the default.
+- `pulseDuration` is the pulse length in milliseconds. It defaults to `200`, which is suitable for Somfy DCT.
+- `activeLow` selects the relay polarity and defaults to `true`.
 - `transitionInterval` is an optional setting that allows you to simulate a blind transition movement between open and closed. If it takes 15 seconds for the blinds to open, enter `15` here and `homebridge-blinds-wired` will simulate the time it takes to complete that transition in HomeKit. The default is 10 seconds.
 - `manufacturer`, `model`, and `serial` are optional settings to allow you to further identify your blinds in HomeKit.
+
+Each blind must have a unique name. `upPin` and `downPin` must be different; a physical `stopPin` must also use a separate GPIO line.
 
 ## Upgrading from v1.x
 
@@ -92,10 +96,10 @@ sudo apt install -y build-essential python3 make g++ gpiod libgpiod-dev
 
 ## Notes
 
-This plugin doesn't query nor have direct knowledge of the actual position of your blinds. Instead, it emulates the position based on your most recent request to raise / lower the blinds (i.e. it remembers what you last asked it to do and reports that back to HomeKit). Some blinds, such as Somfy, don't support querying their specific state. That said, if you do wish to use a specific position, you can do so. It's passed as the last argument to the up and down script configuration options. How you choose to handle it, is up to you. What your plugin should output is the position it wants to HomeKit (e.g. 100 if the blind is fully open).
+This plugin cannot query the physical position of the blinds. It estimates position from the configured travel duration, remembers the most recent estimate, and reports that value to HomeKit. Calibrate `transitionInterval` to the actual full travel time for the best partial-position accuracy.
 
-Additionally, if you specify `transitionInterval` and `stopPin` you'll magically get the ability to move the blind a precise amount. For instance, if you try to open the blind to 20%, `homebridge-blinds-wired` will pulsen the `upPin` and then use `transitionInterval` to figure out how many seconds to allow the blinds to move before pulsing the `stopPin`. The result, if you have `transitionInterval` correctly calculated for your blinds, should be relatively precise placement of your blinds at home - something that many popular blinds (e.g. Somfy), can't do natively!
+When `transitionInterval` and `stopPin` are configured, the plugin can estimate partial positions. For example, to open a blind to 20%, it pulses `upPin`, calculates the movement time from `transitionInterval`, and then pulses the configured stop command. Accurate calibration produces reasonably precise placement even for systems such as Somfy DCT that do not report their physical position.
 
 ## Plugin Development
 
-[![License](https://img.shields.io/npm/l/homebridge-blinds-wired?color=%23333333&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/adrianmihai83/homebridge-blinds-wired/blob/master/LICENSE.md)
+[![License](https://img.shields.io/npm/l/homebridge-blinds-wired?color=%23333333&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/adrianmihai83/homebridge-blinds-wired/blob/main/LICENSE.md)

@@ -5,7 +5,8 @@ declare module "node-libgpiod" {
 
   export class Line {
     constructor(chip: Chip, line: number);
-    requestOutputMode(): void;
+    requestOutputMode(consumer?: string, initialValue?: number): void;
     setValue(value: number): void;
+    release(): void;
   }
 }
