@@ -8,4 +8,4 @@ export const PLATFORM_NAME = "Blinds Wired";
 // The name of our plugin.
 export const PLUGIN_NAME = "homebridge-blinds-wired";
 
-export const PLUGIN_VERSION = "2.0.2";
+export const PLUGIN_VERSION = "2.1.2";

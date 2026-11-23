@@ -2,20 +2,14 @@
  *
  * blindsWired-blind.ts: homebridge-blinds-wired window covering accessory.
  */
-import type { Chip, Line } from "node-libgpiod";
 import { CharacteristicValue, PlatformAccessory, Service } from "homebridge";
 
 import { blindsWiredPlatform } from "./blindsWired-platform";
 import { ResolvedBlindConfig } from "./blindsWired-types";
+import { GpioManager, GpioValue } from "./gpio-manager";
 import { PLATFORM_NAME, PLUGIN_NAME, PLUGIN_VERSION } from "./settings";
 
-interface BlindLines {
-  upPin: Line;
-  downPin: Line;
-  stopPin?: Line;
-}
-
-type PinName = keyof BlindLines;
+type PinName = "upPin" | "downPin" | "stopPin";
 
 export class Blind {
   public readonly accessory: PlatformAccessory;
@@ -23,19 +17,19 @@ export class Blind {
   private readonly config: ResolvedBlindConfig;
   private readonly platform: blindsWiredPlatform;
   private readonly service: Service;
+  private readonly gpioManager: GpioManager;
   private currentPosition: number;
   private targetPosition: number;
   private positionState: number;
-  private gpioChip?: Chip;
-  private gpioLines: Partial<BlindLines> = {};
   private gpioError?: Error;
   private isMoving = false;
   private moveTimer?: NodeJS.Timeout;
   private pulseTimer?: NodeJS.Timeout;
 
-  constructor(platform: blindsWiredPlatform, config: ResolvedBlindConfig) {
+  constructor(platform: blindsWiredPlatform, config: ResolvedBlindConfig, gpioManager: GpioManager) {
     this.platform = platform;
     this.config = config;
+    this.gpioManager = gpioManager;
 
     const uuid = platform.api.hap.uuid.generate("Blinds Wired." + config.name);
     const cachedAccessory = platform.accessories.find((candidate) => candidate.UUID === uuid);
@@ -58,7 +52,6 @@ export class Blind {
 
     this.configureInformation();
     this.configureCharacteristics();
-    this.initializeGpio();
     this.updateAccessoryContext();
 
     platform.log.info(
@@ -81,25 +74,6 @@ export class Blind {
       this.moveTimer = undefined;
     }
     this.finishPulse();
-
-    for (const [name, line] of Object.entries(this.gpioLines)) {
-      if (!line) {
-        continue;
-      }
-      try {
-        line.setValue(this.inactiveValue());
-      } catch (error) {
-        this.platform.log.warn("Unable to set %s %s inactive during shutdown: %s", this.config.name, name, this.errorMessage(error));
-      }
-      try {
-        line.release();
-      } catch (error) {
-        this.platform.log.warn("Unable to release %s %s during shutdown: %s", this.config.name, name, this.errorMessage(error));
-      }
-    }
-
-    this.gpioLines = {};
-    this.gpioChip = undefined;
   }
 
   private configureCharacteristics(): void {
@@ -130,46 +104,6 @@ export class Blind {
       .setCharacteristic(Characteristic.FirmwareRevision, PLUGIN_VERSION);
   }
 
-  private initializeGpio(): void {
-    try {
-      // Loading the native module here allows Homebridge to inspect or disable
-      // the plugin on machines that do not provide Raspberry Pi GPIO.
-      const Gpio = require("node-libgpiod") as typeof import("node-libgpiod");
-      this.gpioChip = new Gpio.Chip(this.config.gpioChip);
-      this.gpioLines.upPin = this.requestLine(Gpio, this.config.upPin);
-      this.gpioLines.downPin = this.requestLine(Gpio, this.config.downPin);
-      if (this.config.stopPin !== 99) {
-        this.gpioLines.stopPin = this.requestLine(Gpio, this.config.stopPin);
-      }
-      this.gpioError = undefined;
-    } catch (error) {
-      const gpioError = error instanceof Error ? error : new Error(String(error));
-      this.shutdown();
-      this.gpioError = gpioError;
-      this.platform.log.error("Unable to initialise GPIO for %s: %s", this.config.name, this.gpioError.message);
-    }
-  }
-
-  private requestLine(Gpio: typeof import("node-libgpiod"), pin: number): Line {
-    if (!this.gpioChip) {
-      throw new Error("GPIO chip is not available");
-    }
-    const line = new Gpio.Line(this.gpioChip, pin);
-    // Request the line with its inactive value from the first output state.
-    // This avoids a short active-low relay pulse during Homebridge startup.
-    try {
-      line.requestOutputMode(PLUGIN_NAME, this.inactiveValue());
-    } catch (error) {
-      try {
-        line.release();
-      } catch {
-        // Preserve the original request error.
-      }
-      throw error;
-    }
-    return line;
-  }
-
   private setTargetPosition(value: CharacteristicValue): void {
     const requestedPosition = Number(value);
     if (!Number.isFinite(requestedPosition) || requestedPosition < 0 || requestedPosition > 100) {
@@ -186,7 +120,6 @@ export class Blind {
       return;
     }
 
-    this.ensureGpio();
     const moveUp = target > this.currentPosition;
     this.targetPosition = target;
     this.positionState = moveUp
@@ -264,13 +197,8 @@ export class Blind {
     this.finishPulse();
 
     try {
-      for (const pinName of pinNames) {
-        const line = this.gpioLines[pinName];
-        if (!line) {
-          throw new Error(`GPIO line ${pinName} is not configured`);
-        }
-        line.setValue(this.activeValue());
-      }
+      const selected = new Set(pinNames);
+      this.gpioManager.setValues(this.gpioValues((name) => selected.has(name)));
     } catch (error) {
       this.finishPulse();
       throw error;
@@ -286,16 +214,11 @@ export class Blind {
       this.pulseTimer = undefined;
     }
 
-    for (const line of Object.values(this.gpioLines)) {
-      if (!line) {
-        continue;
-      }
-      try {
-        line.setValue(this.inactiveValue());
-      } catch (error) {
-        this.gpioError = error instanceof Error ? error : new Error(String(error));
-        this.platform.log.error("Unable to deactivate a GPIO line for %s: %s", this.config.name, this.gpioError.message);
-      }
+    try {
+      this.gpioManager.setValues(this.gpioValues(() => false));
+    } catch (error) {
+      this.gpioError = error instanceof Error ? error : new Error(String(error));
+      this.platform.log.error("Unable to deactivate GPIO lines for %s: %s", this.config.name, this.gpioError.message);
     }
   }
 
@@ -303,9 +226,17 @@ export class Blind {
     if (this.gpioError) {
       throw this.gpioError;
     }
-    if (!this.gpioLines.upPin || !this.gpioLines.downPin) {
-      throw new Error("GPIO lines are not available");
+  }
+
+  private gpioValues(isActive: (name: PinName) => boolean): GpioValue[] {
+    const values: GpioValue[] = [
+      { chip: this.config.gpioChip, offset: this.config.upPin, active: isActive("upPin") },
+      { chip: this.config.gpioChip, offset: this.config.downPin, active: isActive("downPin") },
+    ];
+    if (this.config.stopPin !== 99) {
+      values.push({ chip: this.config.gpioChip, offset: this.config.stopPin, active: isActive("stopPin") });
     }
+    return values;
   }
 
   private updateAccessoryContext(): void {
@@ -321,14 +252,6 @@ export class Blind {
       transitionInterval: this.config.transitionInterval,
     };
     this.platform.api.updatePlatformAccessories([this.accessory]);
-  }
-
-  private activeValue(): number {
-    return this.config.activeLow ? 0 : 1;
-  }
-
-  private inactiveValue(): number {
-    return this.config.activeLow ? 1 : 0;
   }
 
   private positionName(position: number): string {

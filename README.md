@@ -28,13 +28,18 @@ sudo npm install -g homebridge-blinds-wired
 
 ## Dependencies
 
-Make sure libgpiod is installed on the Raspberry Pi:
+On Debian 13 (Trixie), install the libgpiod 2 runtime and diagnostic tools:
 
 ```sh
-sudo apt install -y build-essential python3 make g++ gpiod libgpiod-dev
+sudo apt update
+sudo apt install -y gpiod libgpiod3
 ```
 
-Version 2.0.2 supports Homebridge 2.x on Node.js 22.12 or Node.js 24.
+No compiler, Python helper, or `libgpiod-dev` package is required. Version 2.1.2
+uses the libgpiod 2 C API directly and keeps each GPIO line requested for the
+entire lifetime of the Homebridge process.
+
+Version 2.1.2 supports Homebridge 2.x on Node.js 22.12, 24, and 26.
 
 ## Configuration
 
@@ -76,11 +81,56 @@ For those that prefer configuring things directly, add the platform in `config.j
 - `transitionInterval` is an optional setting that allows you to simulate a blind transition movement between open and closed. If it takes 15 seconds for the blinds to open, enter `15` here and `homebridge-blinds-wired` will simulate the time it takes to complete that transition in HomeKit. The default is 10 seconds.
 - `manufacturer`, `model`, and `serial` are optional settings to allow you to further identify your blinds in HomeKit.
 
-Each blind must have a unique name. `upPin` and `downPin` must be different; a physical `stopPin` must also use a separate GPIO line.
+Each blind must have a unique name. `upPin` and `downPin` must be different; a physical `stopPin` must also use a separate GPIO line. A GPIO line cannot be shared by two configured blinds.
+
+## Raspberry Pi 5 / Debian 13 deployment
+
+1. Install the required runtime and verify that RP1 is `gpiochip0`:
+
+   ```sh
+   sudo apt update
+   sudo apt install -y gpiod libgpiod3
+   gpiodetect
+   gpioinfo -c gpiochip0
+   ```
+
+2. Ensure that the account running Homebridge can open the GPIO device. On the
+   standard Homebridge image this is normally the `homebridge` account and the
+   `gpio` group:
+
+   ```sh
+   stat -c '%U %G %a %n' /dev/gpiochip0
+   sudo usermod -aG gpio homebridge
+   sudo systemctl restart homebridge
+   ```
+
+3. Keep `"gpioChip": 0` and use BCM line offsets such as `17` and `27`. Do not
+   enter physical header pin numbers.
+
+4. Install or upgrade the plugin, then restart Homebridge:
+
+   ```sh
+   sudo npm install -g homebridge-blinds-wired@2.1.2
+   sudo systemctl restart homebridge
+   journalctl -u homebridge -n 100 --no-pager
+   ```
+
+### Relay safety
+
+The plugin requests all outputs in their logical inactive state and retains
+exclusive ownership while Homebridge runs. It also drives all outputs inactive
+before releasing them during a clean shutdown.
+
+Software cannot guarantee a GPIO voltage before Linux acquires the line, after
+a crash or power loss, or after the line is released. Relay boards whose input
+circuit already keeps an unconnected LOW-SIDE/opto-isolated input inactive do
+not require additional resistors; keep the existing wiring. For other relay
+boards, confirm from their schematic that the unconnected input is inactive
+instead of adding an external pull-up or pull-down blindly.
 
 ## Upgrading from v1.x
 
-Version 2.0.0 changed the GPIO backend from `rpi-gpio`/sysfs to `node-libgpiod`. The pin options now use BCM GPIO / libgpiod line numbers, not physical board pins.
+Version 2.0.0 changed the GPIO backend from `rpi-gpio`/sysfs to `node-libgpiod`. Version 2.1.2 replaces that obsolete libgpiod 1.x addon with direct libgpiod 2.x access. All pin options use BCM/libgpiod line offsets; physical header pin numbers are not accepted or converted.
 
 For example:
 
@@ -88,10 +138,10 @@ For example:
 - Raspberry Pi physical pin 13 is BCM GPIO 27, so use `"downPin": 27`.
 - `stopPin: 99` is unchanged for Somfy DCT and still pulses both the Up and Down pins.
 
-Before installing v2.x, install the libgpiod development headers:
+On Debian 13, install only the runtime packages:
 
 ```sh
-sudo apt install -y build-essential python3 make g++ gpiod libgpiod-dev
+sudo apt install -y gpiod libgpiod3
 ```
 
 ## Notes

@@ -7,6 +7,7 @@ import util from "util";
 
 import { Blind } from "./blindsWired-blind";
 import { BlindConfig, ResolvedBlindConfig } from "./blindsWired-types";
+import { createGpioManager, GpioManager, GpioManagerFactory, GpioLineDefinition } from "./gpio-manager";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings";
 
 const DEFAULT_STOP_PIN = 99;
@@ -77,9 +78,11 @@ export class blindsWiredPlatform implements DynamicPlatformPlugin {
   public readonly api: API;
   public readonly log: Logging;
   public debugMode = false;
+  public gpioManagerFactory: GpioManagerFactory = createGpioManager;
 
   private readonly blinds: Blind[] = [];
   private readonly configuredBlinds: BlindConfig[];
+  private gpioManager?: GpioManager;
 
   constructor(log: Logging, config: PlatformConfig, api: API) {
     this.api = api;
@@ -111,6 +114,8 @@ export class blindsWiredPlatform implements DynamicPlatformPlugin {
 
   private configureBlinds(): void {
     const configuredNames = new Set<string>();
+    const configuredLines = new Set<string>();
+    const configs: ResolvedBlindConfig[] = [];
 
     for (const blindConfig of this.configuredBlinds) {
       const result = resolveBlindConfig(blindConfig);
@@ -125,8 +130,43 @@ export class blindsWiredPlatform implements DynamicPlatformPlugin {
         continue;
       }
 
+      const offsets = [result.config.upPin, result.config.downPin];
+      if (result.config.stopPin !== DEFAULT_STOP_PIN) {
+        offsets.push(result.config.stopPin);
+      }
+      const lineKeys = offsets.map((offset) => `${result.config?.gpioChip}:${offset}`);
+      const conflict = lineKeys.find((lineKey) => configuredLines.has(lineKey));
+      if (conflict) {
+        this.log.error("GPIO lines must be unique across blinds; ignoring %s because gpiochip%s is already used.",
+          result.config.name, conflict);
+        continue;
+      }
+
       configuredNames.add(result.config.name);
-      this.blinds.push(new Blind(this, result.config));
+      lineKeys.forEach((lineKey) => configuredLines.add(lineKey));
+      configs.push(result.config);
+    }
+
+    const definitions: GpioLineDefinition[] = configs.flatMap((config) => {
+      const offsets = [config.upPin, config.downPin];
+      if (config.stopPin !== DEFAULT_STOP_PIN) {
+        offsets.push(config.stopPin);
+      }
+      return offsets.map((offset) => ({ chip: config.gpioChip, offset, activeLow: config.activeLow }));
+    });
+
+    if (definitions.length > 0) {
+      try {
+        this.gpioManager = this.gpioManagerFactory(definitions);
+        this.gpioManager.initialize();
+      } catch (error) {
+        const gpioError = error instanceof Error ? error : new Error(String(error));
+        this.gpioManager = new FailedGpioManager(gpioError);
+        this.log.error("Unable to initialise GPIO: %s", gpioError.message);
+      }
+      for (const config of configs) {
+        this.blinds.push(new Blind(this, config, this.gpioManager));
+      }
     }
 
     for (const accessory of this.accessories) {
@@ -143,7 +183,19 @@ export class blindsWiredPlatform implements DynamicPlatformPlugin {
     for (const blind of this.blinds) {
       blind.shutdown();
     }
+    try {
+      this.gpioManager?.shutdown();
+    } catch (error) {
+      this.log.error("Unable to complete safe GPIO shutdown: %s", error instanceof Error ? error.message : String(error));
+    }
   }
+}
+
+class FailedGpioManager implements GpioManager {
+  constructor(private readonly error: Error) {}
+  initialize(): void { throw this.error; }
+  setValues(): void { throw this.error; }
+  shutdown(): void { /* No native resources were acquired. */ }
 }
 
 export const configuration = {
